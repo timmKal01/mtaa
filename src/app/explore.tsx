@@ -53,10 +53,13 @@ export default function ExploreScreen() {
     }
   };
 
-  const accept = async (id: string) => {
+  const advance = async (
+    id: string,
+    action: 'accept' | 'pickup' | 'deliver',
+  ) => {
     setError('');
     try {
-      const res = await fetch(`${API_URL}/jobs/${id}/accept`, {
+      const res = await fetch(`${API_URL}/jobs/${id}/${action}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -66,7 +69,7 @@ export default function ExploreScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.message ?? 'Could not accept');
+        setError(data.message ?? `Could not ${action}`);
         return;
       }
       await load();
@@ -76,65 +79,93 @@ export default function ExploreScreen() {
   };
 
   useFocusEffect(
-      useCallback(() => {
-        load();
-      }, []),
+    useCallback(() => {
+      load();
+    }, []),
   );
 
   return (
-      <ThemedView style={styles.container}>
-        <SafeAreaView style={styles.safe}>
-          <ThemedText type="title">Jobs</ThemedText>
-          <Pressable onPress={load}>
+    <ThemedView style={styles.container}>
+      <SafeAreaView style={styles.safe}>
+        <ThemedText type="title">Jobs</ThemedText>
+        <Pressable onPress={load}>
+          <ThemedText type="small">
+            {loading ? 'Loading…' : 'Refresh'}
+          </ThemedText>
+        </Pressable>
+
+        {error ? <ThemedText>{error}</ThemedText> : null}
+
+        <ScrollView
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={loading} onRefresh={load} />
+          }
+        >
+          {jobs.length === 0 && !loading ? (
             <ThemedText type="small">
-              {loading ? 'Loading…' : 'Refresh'}
+              No jobs yet. Post one from Home.
             </ThemedText>
-          </Pressable>
-
-          {error ? <ThemedText>{error}</ThemedText> : null}
-
-          <ScrollView
-              style={styles.list}
-              contentContainerStyle={styles.listContent}
-              refreshControl={
-                <RefreshControl refreshing={loading} onRefresh={load} />
-              }
-          >
-            {jobs.length === 0 && !loading ? (
+          ) : (
+            jobs.map((job) => (
+              <ThemedView
+                key={job.id}
+                type="backgroundElement"
+                style={styles.card}
+              >
+                <ThemedText>{job.what}</ThemedText>
                 <ThemedText type="small">
-                  No jobs yet. Post one from Home.
+                  {job.pickup} → {job.dropoff}
                 </ThemedText>
-            ) : (
-                jobs.map((job) => (
-                    <ThemedView
-                        key={job.id}
-                        type="backgroundElement"
-                        style={styles.card}
-                    >
-                      <ThemedText>{job.what}</ThemedText>
-                      <ThemedText type="small">
-                        {job.pickup} → {job.dropoff}
-                      </ThemedText>
-                      <ThemedText type="small">
-                        {job.when} ·{' '}
-                        {job.budgetKes != null ? `KES ${job.budgetKes}` : 'No budget'}{' '}
-                        · {job.status}
-                      </ThemedText>
-                      {job.status === 'posted' ? (
-                          <Pressable onPress={() => accept(job.id)} style={styles.row}>
-                            <ThemedText>Accept</ThemedText>
-                          </Pressable>
-                      ) : (
-                          <ThemedText type="small">
-                            Accepted by {job.providerEmail ?? 'provider'}
-                          </ThemedText>
-                      )}
-                    </ThemedView>
-                ))
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </ThemedView>
+                <ThemedText type="small">
+                  {job.when} ·{' '}
+                  {job.budgetKes != null ? `KES ${job.budgetKes}` : 'No budget'}{' '}
+                  · {job.status}
+                </ThemedText>
+
+                {job.status === 'posted' ? (
+                  <Pressable
+                    onPress={() => advance(job.id, 'accept')}
+                    style={styles.row}
+                  >
+                    <ThemedText>Accept</ThemedText>
+                  </Pressable>
+                ) : null}
+
+                {job.status === 'accepted' ? (
+                  <Pressable
+                    onPress={() => advance(job.id, 'pickup')}
+                    style={styles.row}
+                  >
+                    <ThemedText>Picked up</ThemedText>
+                  </Pressable>
+                ) : null}
+
+                {job.status === 'picked_up' ? (
+                  <Pressable
+                    onPress={() => advance(job.id, 'deliver')}
+                    style={styles.row}
+                  >
+                    <ThemedText>Delivered</ThemedText>
+                  </Pressable>
+                ) : null}
+
+                {job.status === 'delivered' ? (
+                  <ThemedText type="small">Completed</ThemedText>
+                ) : null}
+
+                {job.providerEmail && job.status !== 'posted' ? (
+                  <ThemedText type="small">
+                    Provider: {job.providerEmail}
+                  </ThemedText>
+                ) : null}
+              </ThemedView>
+            ))
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </ThemedView>
   );
 }
 
