@@ -12,6 +12,7 @@ import { useEffect } from 'react';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
+import { RoleProvider } from '@/context/role';
 import SignInScreen from './sign-in';
 
 SplashScreen.preventAutoHideAsync();
@@ -48,7 +49,9 @@ function RootNav() {
 export default function RootLayout() {
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <RootNav />
+      <RoleProvider>
+        <RootNav />
+      </RoleProvider>
     </ClerkProvider>
   );
 }

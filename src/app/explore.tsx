@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useRole } from '@/context/role';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.152.35.238:3000';
@@ -23,6 +24,7 @@ type Job = {
   dropoff: string;
   when: string;
   budgetKes: number | null;
+  customerClerkId?: string;
   customerEmail?: string;
   providerEmail?: string;
   status: string;
@@ -31,6 +33,7 @@ type Job = {
 
 export default function ExploreScreen() {
   const { user } = useUser();
+  const { role } = useRole();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -72,6 +75,10 @@ export default function ExploreScreen() {
         setError(data.message ?? `Could not ${action}`);
         return;
       }
+      if (data.message) {
+        setError(data.message);
+        return;
+      }
       await load();
     } catch (e: any) {
       setError(e?.message ?? 'Network error');
@@ -88,6 +95,9 @@ export default function ExploreScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safe}>
         <ThemedText type="title">Jobs</ThemedText>
+        <ThemedText type="small">
+          {role === 'provider' ? 'Provider mode' : 'Customer mode'}
+        </ThemedText>
         <Pressable onPress={load}>
           <ThemedText type="small">
             {loading ? 'Loading…' : 'Refresh'}
@@ -108,60 +118,72 @@ export default function ExploreScreen() {
               No jobs yet. Post one from Home.
             </ThemedText>
           ) : (
-            jobs.map((job) => (
-              <ThemedView
-                key={job.id}
-                type="backgroundElement"
-                style={styles.card}
-              >
-                <ThemedText>{job.what}</ThemedText>
-                <ThemedText type="small">
-                  {job.pickup} → {job.dropoff}
-                </ThemedText>
-                <ThemedText type="small">
-                  {job.when} ·{' '}
-                  {job.budgetKes != null ? `KES ${job.budgetKes}` : 'No budget'}{' '}
-                  · {job.status}
-                </ThemedText>
+            jobs.map((job) => {
+              const isMine = job.customerClerkId === user?.id;
+              const canAct = role === 'provider' && !isMine;
 
-                {job.status === 'posted' ? (
-                  <Pressable
-                    onPress={() => advance(job.id, 'accept')}
-                    style={styles.row}
-                  >
-                    <ThemedText>Accept</ThemedText>
-                  </Pressable>
-                ) : null}
-
-                {job.status === 'accepted' ? (
-                  <Pressable
-                    onPress={() => advance(job.id, 'pickup')}
-                    style={styles.row}
-                  >
-                    <ThemedText>Picked up</ThemedText>
-                  </Pressable>
-                ) : null}
-
-                {job.status === 'picked_up' ? (
-                  <Pressable
-                    onPress={() => advance(job.id, 'deliver')}
-                    style={styles.row}
-                  >
-                    <ThemedText>Delivered</ThemedText>
-                  </Pressable>
-                ) : null}
-
-                {job.status === 'delivered' ? (
-                  <ThemedText type="small">Completed</ThemedText>
-                ) : null}
-
-                {job.providerEmail && job.status !== 'posted' ? (
+              return (
+                <ThemedView
+                  key={job.id}
+                  type="backgroundElement"
+                  style={styles.card}
+                >
+                  <ThemedText>{job.what}</ThemedText>
+                  <ThemedText type="small">{job.type}</ThemedText>
                   <ThemedText type="small">
-                    Provider: {job.providerEmail}
+                    {job.pickup} → {job.dropoff}
                   </ThemedText>
-                ) : null}
-              </ThemedView>
-            ))
+                  <ThemedText type="small">
+                    {job.when} ·{' '}
+                    {job.budgetKes != null
+                      ? `KES ${job.budgetKes}`
+                      : 'No budget'}{' '}
+                    · {job.status}
+                  </ThemedText>
+
+                  {isMine ? (
+                    <ThemedText type="small">Your job</ThemedText>
+                  ) : null}
+
+                  {canAct && job.status === 'posted' ? (
+                    <Pressable
+                      onPress={() => advance(job.id, 'accept')}
+                      style={styles.row}
+                    >
+                      <ThemedText>Accept</ThemedText>
+                    </Pressable>
+                  ) : null}
+
+                  {canAct && job.status === 'accepted' ? (
+                    <Pressable
+                      onPress={() => advance(job.id, 'pickup')}
+                      style={styles.row}
+                    >
+                      <ThemedText>Picked up</ThemedText>
+                    </Pressable>
+                  ) : null}
+
+                  {canAct && job.status === 'picked_up' ? (
+                    <Pressable
+                      onPress={() => advance(job.id, 'deliver')}
+                      style={styles.row}
+                    >
+                      <ThemedText>Delivered</ThemedText>
+                    </Pressable>
+                  ) : null}
+
+                  {job.status === 'delivered' ? (
+                    <ThemedText type="small">Completed</ThemedText>
+                  ) : null}
+
+                  {job.providerEmail && job.status !== 'posted' ? (
+                    <ThemedText type="small">
+                      Provider: {job.providerEmail}
+                    </ThemedText>
+                  ) : null}
+                </ThemedView>
+              );
+            })
           )}
         </ScrollView>
       </SafeAreaView>

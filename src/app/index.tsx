@@ -6,17 +6,30 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AnimatedIcon } from '@/components/animated-icon';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useRole } from '@/context/role';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.152.35.238:3000';
+
+type JobType = 'deliver' | 'pickup' | 'buy' | 'errand' | 'move';
+
+const titles: Record<JobType, string> = {
+  deliver: 'Deliver something',
+  pickup: 'Pick something up',
+  buy: 'Buy something',
+  errand: 'Run an errand',
+  move: 'Move something',
+};
 
 export default function HomeScreen() {
   const { user } = useUser();
   const { getToken } = useAuth();
   const { signOut } = useClerk();
+  const { role, setRole } = useRole();
   const email = user?.primaryEmailAddress?.emailAddress ?? 'Signed in';
 
   const [open, setOpen] = useState(false);
+  const [jobType, setJobType] = useState<JobType>('deliver');
   const [what, setWhat] = useState('');
   const [pickup, setPickup] = useState('');
   const [dropoff, setDropoff] = useState('');
@@ -24,6 +37,12 @@ export default function HomeScreen() {
   const [budget, setBudget] = useState('');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const start = (type: JobType) => {
+    setJobType(type);
+    setOpen(true);
+    setStatus('');
+  };
 
   const postJob = async () => {
     setStatus('');
@@ -41,7 +60,7 @@ export default function HomeScreen() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          type: 'deliver',
+          type: jobType,
           what: what.trim(),
           pickup: pickup.trim(),
           dropoff: dropoff.trim(),
@@ -84,12 +103,25 @@ export default function HomeScreen() {
           {email}
         </ThemedText>
 
-        {open ? (
+        <ThemedView style={styles.roles}>
+          <Pressable onPress={() => setRole('customer')}>
+            <ThemedText>
+              {role === 'customer' ? '• Customer' : 'Customer'}
+            </ThemedText>
+          </Pressable>
+          <Pressable onPress={() => setRole('provider')}>
+            <ThemedText>
+              {role === 'provider' ? '• Provider' : 'Provider'}
+            </ThemedText>
+          </Pressable>
+        </ThemedView>
+
+        {open && role === 'customer' ? (
           <ThemedView type="backgroundElement" style={styles.stepContainer}>
             <Pressable onPress={() => setOpen(false)}>
               <ThemedText type="small">Back</ThemedText>
             </Pressable>
-            <ThemedText type="title">Deliver something</ThemedText>
+            <ThemedText type="title">{titles[jobType]}</ThemedText>
             <TextInput
               style={styles.input}
               placeholder="What?"
@@ -131,16 +163,26 @@ export default function HomeScreen() {
             </Pressable>
             {status ? <ThemedText>{status}</ThemedText> : null}
           </ThemedView>
-        ) : (
+        ) : role === 'customer' ? (
           <ThemedView type="backgroundElement" style={styles.stepContainer}>
-            <Pressable onPress={() => setOpen(true)} style={styles.row}>
+            <Pressable onPress={() => start('deliver')} style={styles.row}>
               <ThemedText>Deliver something</ThemedText>
             </Pressable>
-            <ThemedText>Pick something up</ThemedText>
-            <ThemedText>Buy something</ThemedText>
-            <ThemedText>Run an errand</ThemedText>
-            <ThemedText>Move something</ThemedText>
+            <Pressable onPress={() => start('pickup')} style={styles.row}>
+              <ThemedText>Pick something up</ThemedText>
+            </Pressable>
+            <Pressable onPress={() => start('buy')} style={styles.row}>
+              <ThemedText>Buy something</ThemedText>
+            </Pressable>
+            <Pressable onPress={() => start('errand')} style={styles.row}>
+              <ThemedText>Run an errand</ThemedText>
+            </Pressable>
+            <Pressable onPress={() => start('move')} style={styles.row}>
+              <ThemedText>Move something</ThemedText>
+            </Pressable>
           </ThemedView>
+        ) : (
+          <ThemedText type="small">Open Explore to take jobs.</ThemedText>
         )}
 
         <Pressable onPress={() => signOut()} style={styles.signOut}>
@@ -171,6 +213,7 @@ const styles = StyleSheet.create({
   title: { textAlign: 'center' },
   subtitle: { textAlign: 'center', opacity: 0.7 },
   code: { textTransform: 'none' },
+  roles: { flexDirection: 'row', gap: 16 },
   stepContainer: {
     gap: Spacing.three,
     alignSelf: 'stretch',
