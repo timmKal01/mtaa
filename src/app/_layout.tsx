@@ -12,6 +12,7 @@ import { useEffect } from 'react';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
+import { JobsProvider } from '@/context/jobs';
 import { RoleProvider } from '@/context/role';
 import SignInScreen from './sign-in';
 
@@ -41,7 +42,13 @@ function RootNav() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AnimatedSplashOverlay />
-      {isSignedIn ? <AppTabs /> : <SignInScreen />}
+      {isSignedIn ? (
+        <JobsProvider>
+          <AppTabs />
+        </JobsProvider>
+      ) : (
+        <SignInScreen />
+      )}
     </ThemeProvider>
   );
 }

@@ -1,26 +1,51 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
 import '@/global.css';
 
 import { Platform } from 'react-native';
 
+// Semantic colour tokens. Dark values match the Mtaa mock (assets/images/Theme.png);
+// light values keep the same roles with AA contrast on white.
 export const Colors = {
   light: {
-    text: '#000000',
+    text: '#0B0B0C',
     background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    backgroundElement: '#F2F3F5',
+    backgroundSelected: '#E3E5EA',
+    textSecondary: '#5B606A',
+    placeholder: '#6B7280',
+    border: '#D5D8DE',
+    iconButton: '#E6E8EC',
+    primary: '#2563eb',
+    onPrimary: '#ffffff',
+    primarySoft: 'rgba(37, 99, 235, 0.10)',
+    primaryText: '#1d4ed8',
+    success: '#15803d',
+    successSoft: 'rgba(34, 197, 94, 0.14)',
+    warning: '#b45309',
+    warningSoft: 'rgba(245, 158, 11, 0.16)',
+    danger: '#b91c1c',
+    dangerSoft: 'rgba(239, 68, 68, 0.12)',
+    dangerButton: '#dc2626',
   },
   dark: {
     text: '#ffffff',
     background: '#000000',
-    backgroundElement: '#212225',
+    backgroundElement: '#1a1a1a',
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
+    placeholder: '#8A8F98',
+    border: '#333333',
+    iconButton: '#222222',
+    primary: '#2563eb',
+    onPrimary: '#ffffff',
+    primarySoft: 'rgba(37, 99, 235, 0.18)',
+    primaryText: '#60a5fa',
+    success: '#4ade80',
+    successSoft: 'rgba(34, 197, 94, 0.16)',
+    warning: '#fbbf24',
+    warningSoft: 'rgba(245, 158, 11, 0.16)',
+    danger: '#f87171',
+    dangerSoft: 'rgba(239, 68, 68, 0.16)',
+    dangerButton: '#dc2626',
   },
 } as const;
 
@@ -28,13 +53,9 @@ export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
     serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {
@@ -60,6 +81,11 @@ export const Spacing = {
   five: 32,
   six: 64,
 } as const;
+
+export const Radius = { sm: 10, md: 14, lg: 16, pill: 999 } as const;
+
+// Room under scrolling content so the floating tab bar never hides the last card or button.
+export const TabBarClearance = 200;
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;

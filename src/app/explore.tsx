@@ -1,237 +1,186 @@
-import { useAuth, useUser } from '@clerk/expo';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useMemo } from 'react';
 import {
-  Pressable,
+  ActivityIndicator,
   RefreshControl,
-  ScrollView,
+  SectionList,
   StyleSheet,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { JobCard } from '@/components/job-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { EmptyState, Notice, RoleSwitch } from '@/components/ui';
+import { Spacing, TabBarClearance } from '@/constants/theme';
+import { useJobs } from '@/context/jobs';
 import { useRole } from '@/context/role';
-import { Spacing } from '@/constants/theme';
+import { useJobActions } from '@/hooks/use-job-actions';
+import { useTheme } from '@/hooks/use-theme';
+import { isCustomer, isPaid, isProvider, type Job } from '@/lib/jobs';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.123.172.238:3000';
+type Section = { key: string; title: string; hint?: string; data: Job[] };
 
-type Job = {
-  id: string;
-  type: string;
-  what: string;
-  pickup: string;
-  dropoff: string;
-  when: string;
-  budgetKes: number | null;
-  customerClerkId?: string;
-  customerEmail?: string;
-  providerEmail?: string;
-  status: string;
-  paymentStatus?: string;
-  mpesaReceipt?: string;
-  createdAt: string;
-};
-
-export default function ExploreScreen() {
-  const { user } = useUser();
-  const { getToken } = useAuth();
+export default function JobsScreen() {
+  const { jobs, userId, loading, loaded, error, pending, refresh } = useJobs();
   const { role } = useRole();
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const load = async () => {
-    setError('');
-    setLoading(true);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/jobs`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message ?? 'Could not load jobs');
-        return;
-      }
-      setJobs(Array.isArray(data) ? data : []);
-    } catch (e: any) {
-      setError(e?.message ?? 'Network error. Is mtaa-api running?');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const advance = async (
-    id: string,
-    action: 'accept' | 'pickup' | 'deliver',
-  ) => {
-    setError('');
-    try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/jobs/${id}/${action}`, {
-        method: 'PATCH',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message ?? `Could not ${action}`);
-        return;
-      }
-      if (data.message) {
-        setError(data.message);
-        return;
-      }
-      await load();
-    } catch (e: any) {
-      setError(e?.message ?? 'Network error');
-    }
-  };
-
-  const pay = async (id: string) => {
-    setError('');
-    try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/jobs/${id}/pay`, {
-        method: 'PATCH',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message ?? 'Could not pay');
-        return;
-      }
-      if (data.message && !data.mpesaReceipt) {
-        setError(data.message);
-      }
-      await load();
-    } catch (e: any) {
-      setError(e?.message ?? 'Network error');
-    }
-  };
+  const onAction = useJobActions();
+  const router = useRouter();
+  const theme = useTheme();
 
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, []),
+      refresh();
+    }, [refresh]),
+  );
+
+  const { sections, hiddenOwn } = useMemo(() => {
+    const mine = jobs.filter((j) => isCustomer(j, userId));
+    if (role === 'customer') {
+      return {
+        hiddenOwn: 0,
+        sections: [
+          {
+            key: 'active',
+            title: 'In progress',
+            data: mine.filter((j) => j.status !== 'delivered'),
+          },
+          {
+            key: 'done',
+            title: 'Completed',
+            data: mine.filter((j) => j.status === 'delivered'),
+          },
+        ].filter((s) => s.data.length > 0) as Section[],
+      };
+    }
+
+    const assigned = jobs.filter((j) => isProvider(j, userId));
+    const open = jobs.filter((j) => j.status === 'posted' && !isCustomer(j, userId));
+    return {
+      hiddenOwn: mine.length,
+      sections: [
+        {
+          key: 'working',
+          title: 'Your active jobs',
+          data: assigned.filter((j) => j.status === 'accepted' || j.status === 'picked_up'),
+        },
+        {
+          key: 'ready',
+          title: 'Ready to accept',
+          hint: 'Paid by the customer',
+          data: open.filter(isPaid),
+        },
+        {
+          key: 'waiting',
+          title: 'Waiting for payment',
+          hint: 'You can accept these once the customer pays',
+          data: open.filter((j) => !isPaid(j)),
+        },
+        {
+          key: 'done',
+          title: 'Completed by you',
+          data: assigned.filter((j) => j.status === 'delivered'),
+        },
+      ].filter((s) => s.data.length > 0),
+    };
+  }, [jobs, role, userId]);
+
+  const header = (
+    <View style={styles.header}>
+      <ThemedText style={styles.title} accessibilityRole="header">
+        Jobs
+      </ThemedText>
+      <RoleSwitch compact />
+      <ThemedText type="small" themeColor="textSecondary">
+        {role === 'customer'
+          ? 'Jobs you have posted. Pay for a job so providers can take it.'
+          : 'Paid jobs across Nairobi that you can take, and the ones you are doing.'}
+      </ThemedText>
+      {error ? (
+        <Notice
+          tone="error"
+          title={loaded ? 'Showing the last jobs we loaded' : "Couldn't load jobs"}
+          message={error}
+          action={{ label: 'Try again', onPress: refresh }}
+        />
+      ) : null}
+      {hiddenOwn > 0 ? (
+        <Notice
+          icon="eye-off-outline"
+          message={`${hiddenOwn} job${hiddenOwn === 1 ? '' : 's'} you posted ${hiddenOwn === 1 ? 'is' : 'are'} hidden here. Switch to Customer to manage ${hiddenOwn === 1 ? 'it' : 'them'}.`}
+        />
+      ) : null}
+    </View>
+  );
+
+  const empty = !loaded ? (
+    loading ? (
+      <View style={styles.loading}>
+        <ActivityIndicator color={theme.primary} />
+        <ThemedText type="small" themeColor="textSecondary">
+          Loading jobs…
+        </ThemedText>
+      </View>
+    ) : null
+  ) : role === 'customer' ? (
+    <EmptyState
+      icon="cube-outline"
+      title="No jobs posted yet"
+      message="Tell us what you need picked up, delivered, bought or moved, and a local provider can do it."
+      action={{ label: 'Post a job', onPress: () => router.navigate('/') }}
+    />
+  ) : (
+    <EmptyState
+      icon="briefcase-outline"
+      title="No open jobs right now"
+      message="New jobs appear here as soon as customers post them. Pull down to check again."
+    />
   );
 
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-        <ThemedText type="title">Jobs</ThemedText>
-        <ThemedText type="small">
-          {role === 'provider' ? 'Take jobs' : 'Your jobs'}
-        </ThemedText>
-        <Pressable onPress={load}>
-          <ThemedText type="small">
-            {loading ? 'Loading…' : 'Refresh'}
-          </ThemedText>
-        </Pressable>
-
-        {error ? <ThemedText>{error}</ThemedText> : null}
-
-        <ScrollView
-          style={styles.list}
+        <SectionList
+          sections={sections}
+          keyExtractor={(job) => job.id}
+          renderItem={({ item }) => (
+            <JobCard
+              job={item}
+              userId={userId}
+              role={role}
+              pending={pending[item.id]}
+              onAction={onAction}
+            />
+          )}
+          renderSectionHeader={({ section }) => (
+            <View style={styles.sectionHeader}>
+              <ThemedText style={styles.sectionTitle} accessibilityRole="header">
+                {section.title} · {section.data.length}
+              </ThemedText>
+              {section.hint ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  {section.hint}
+                </ThemedText>
+              ) : null}
+            </View>
+          )}
+          ListHeaderComponent={header}
+          ListEmptyComponent={empty}
+          ItemSeparatorComponent={() => <View style={styles.gap} />}
+          stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.listContent}
           refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={load} />
+            <RefreshControl
+              refreshing={loading && loaded}
+              onRefresh={refresh}
+              tintColor={theme.primary}
+              colors={[theme.primary]}
+            />
           }
-        >
-          {jobs.length === 0 && !loading ? (
-            <ThemedText type="small">
-              No jobs yet. Post one from Home.
-            </ThemedText>
-          ) : (
-            jobs.map((job) => {
-              const isMine =
-                Boolean(user?.id) && job.customerClerkId === user?.id;
-              const canAct = role === 'provider' && !isMine;
-
-              return (
-                <ThemedView
-                  key={job.id}
-                  type="backgroundElement"
-                  style={styles.card}
-                >
-                  <ThemedText>{job.what}</ThemedText>
-                  <ThemedText type="small">{job.type}</ThemedText>
-                  <ThemedText type="small">
-                    {job.pickup} → {job.dropoff}
-                  </ThemedText>
-                  <ThemedText type="small">
-                    {job.when} ·{' '}
-                    {job.budgetKes != null
-                      ? `KES ${job.budgetKes}`
-                      : 'No budget'}{' '}
-                    · {job.status}
-                  </ThemedText>
-                  <ThemedText type="small">
-                    Payment: {job.paymentStatus ?? 'unpaid'}
-                    {job.mpesaReceipt ? ` · ${job.mpesaReceipt}` : ''}
-                  </ThemedText>
-
-                  {isMine ? (
-                    <ThemedText type="small">Your job</ThemedText>
-                  ) : null}
-
-                  {role === 'customer' &&
-                  isMine &&
-                  job.paymentStatus !== 'paid' ? (
-                    <Pressable onPress={() => pay(job.id)} style={styles.row}>
-                      <ThemedText>Pay M-Pesa (test)</ThemedText>
-                    </Pressable>
-                  ) : null}
-
-                  {canAct &&
-                  job.status === 'posted' &&
-                  job.paymentStatus === 'paid' ? (
-                    <Pressable
-                      onPress={() => advance(job.id, 'accept')}
-                      style={styles.row}
-                    >
-                      <ThemedText>Accept</ThemedText>
-                    </Pressable>
-                  ) : null}
-
-                  {canAct &&
-                  job.status === 'posted' &&
-                  job.paymentStatus !== 'paid' ? (
-                    <ThemedText type="small">Waiting for payment</ThemedText>
-                  ) : null}
-
-                  {canAct && job.status === 'accepted' ? (
-                    <Pressable
-                      onPress={() => advance(job.id, 'pickup')}
-                      style={styles.row}
-                    >
-                      <ThemedText>Picked up</ThemedText>
-                    </Pressable>
-                  ) : null}
-
-                  {canAct && job.status === 'picked_up' ? (
-                    <Pressable
-                      onPress={() => advance(job.id, 'deliver')}
-                      style={styles.row}
-                    >
-                      <ThemedText>Delivered</ThemedText>
-                    </Pressable>
-                  ) : null}
-
-                  {job.status === 'delivered' ? (
-                    <ThemedText type="small">Completed</ThemedText>
-                  ) : null}
-
-                  {job.providerEmail && job.status !== 'posted' ? (
-                    <ThemedText type="small">
-                      Provider: {job.providerEmail}
-                    </ThemedText>
-                  ) : null}
-                </ThemedView>
-              );
-            })
-          )}
-        </ScrollView>
+          initialNumToRender={6}
+          windowSize={7}
+        />
       </SafeAreaView>
     </ThemedView>
   );
@@ -239,22 +188,16 @@ export default function ExploreScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safe: {
-    flex: 1,
-    width: '100%',
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
-  },
-  list: { flex: 1, width: '100%' },
+  safe: { flex: 1, width: '100%' },
   listContent: {
-    gap: Spacing.three,
-    paddingBottom: 200,
-  },
-  card: {
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-    gap: 8,
+    paddingTop: Spacing.two,
+    paddingBottom: TabBarClearance,
   },
-  row: { paddingVertical: 8 },
+  header: { gap: 12, paddingBottom: Spacing.two },
+  title: { fontSize: 24, lineHeight: 32, fontWeight: '700' },
+  sectionHeader: { paddingTop: Spacing.four, paddingBottom: 12, gap: 2 },
+  sectionTitle: { fontSize: 17, fontWeight: '700' },
+  gap: { height: 12 },
+  loading: { alignItems: 'center', gap: 8, paddingVertical: Spacing.five },
 });

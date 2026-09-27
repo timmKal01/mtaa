@@ -1,387 +1,379 @@
-import { useAuth, useClerk, useUser } from '@clerk/expo';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
-  TextInput,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/avatar';
+import { AlertsPanel } from '@/components/home/alerts-panel';
+import { PostForm } from '@/components/home/post-form';
+import { ProfilePanel } from '@/components/home/profile-panel';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Button, IconBadge, Notice, PressableRow, RoleSwitch } from '@/components/ui';
+import { Radius, Spacing, TabBarClearance } from '@/constants/theme';
+import { useJobs } from '@/context/jobs';
 import { useRole } from '@/context/role';
-import { Spacing } from '@/constants/theme';
+import { useAvatar } from '@/hooks/use-avatar';
+import { useJobActions } from '@/hooks/use-job-actions';
+import { useTheme } from '@/hooks/use-theme';
+import {
+  formatKes,
+  isCustomer,
+  isPaid,
+  isProvider,
+  JOB_TYPES,
+  jobEvents,
+  statusLabel,
+  type Job,
+  type JobType,
+} from '@/lib/jobs';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.123.172.238:3000';
-
-type JobType = 'deliver' | 'pickup' | 'buy' | 'errand' | 'move';
 type Panel = 'none' | 'profile' | 'alerts';
+const SEEN_KEY = 'mtaa_alerts_seen_at';
 
-type Job = {
-  id: string;
-  what: string;
-  status: string;
-  paymentStatus?: string;
-  customerClerkId?: string;
-};
+function PostedCard({ job, onView, onDismiss }: { job: Job; onView: () => void; onDismiss: () => void }) {
+  const theme = useTheme();
+  const { pending } = useJobs();
+  const onAction = useJobActions();
+  const paid = isPaid(job);
 
-const titles: Record<JobType, string> = {
-  deliver: 'Deliver something',
-  pickup: 'Pick something up',
-  buy: 'Buy something',
-  errand: 'Run an errand',
-  move: 'Move something',
-};
-
-const ACTIONS: {
-  type: JobType;
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-}[] = [
-  { type: 'deliver', label: 'Deliver something', icon: 'cube-outline' },
-  { type: 'pickup', label: 'Pick something up', icon: 'bag-handle-outline' },
-  { type: 'buy', label: 'Buy something', icon: 'cart-outline' },
-  { type: 'errand', label: 'Run an errand', icon: 'walk-outline' },
-  { type: 'move', label: 'Move something', icon: 'car-outline' },
-];
-
-const TIME_SLOTS = [
-  '07:00–09:30',
-  '09:30–12:00',
-  '12:00–14:00',
-  '14:00–16:30',
-  '16:30–19:00',
-  '19:00–21:00',
-];
-
-const DATES = ['Today', 'Tomorrow'] as const;
-type JobDate = (typeof DATES)[number];
+  return (
+    <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+      <View style={styles.cardTop}>
+        <Ionicons name="checkmark-circle" size={22} color={theme.success} />
+        <ThemedText style={styles.cardTitle}>Job posted</ThemedText>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+          hitSlop={12}
+          onPress={onDismiss}
+        >
+          <Ionicons name="close" size={20} color={theme.textSecondary} />
+        </Pressable>
+      </View>
+      <ThemedText numberOfLines={2}>{job.what}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {job.when} · {formatKes(job.budgetKes)}
+      </ThemedText>
+      {paid ? (
+        <Notice
+          tone="success"
+          message={`Paid (test) · ${job.mpesaReceipt ?? ''}. Providers can now see it and accept.`}
+        />
+      ) : (
+        <>
+          <Notice
+            tone="warning"
+            title="One last step"
+            message="Pay now so providers can accept your job. It stays hidden from them until it's paid."
+          />
+          <Button
+            label={`Pay ${formatKes(job.budgetKes)} with M-Pesa (test)`}
+            icon="phone-portrait-outline"
+            loading={pending[job.id] === 'pay'}
+            onPress={() => onAction(job, 'pay')}
+          />
+        </>
+      )}
+      <Button label="View in Jobs" variant="secondary" icon="briefcase-outline" onPress={onView} />
+    </View>
+  );
+}
 
 export default function HomeScreen() {
-  const { user } = useUser();
-  const { getToken } = useAuth();
-  const { signOut } = useClerk();
-  const { role, setRole } = useRole();
   const router = useRouter();
-  const email = user?.primaryEmailAddress?.emailAddress ?? 'Signed in';
+  const theme = useTheme();
+  const { role } = useRole();
+  const { jobs, userId, loaded, loading, error, refresh } = useJobs();
+  const avatar = useAvatar();
+  const scrollRef = useRef<ScrollView>(null);
 
-  const [query, setQuery] = useState('');
   const [panel, setPanel] = useState<Panel>('none');
-  const [alerts, setAlerts] = useState<Job[]>([]);
-  const [open, setOpen] = useState(false);
-  const [slotOpen, setSlotOpen] = useState(false);
-  const [jobType, setJobType] = useState<JobType>('deliver');
-  const [jobDate, setJobDate] = useState<JobDate>('Today');
-  const [what, setWhat] = useState('');
-  const [pickup, setPickup] = useState('');
-  const [dropoff, setDropoff] = useState('');
-  const [when, setWhen] = useState('');
-  const [budget, setBudget] = useState('');
-  const [status, setStatus] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [formType, setFormType] = useState<JobType | null>(null);
+  const [justPostedId, setJustPostedId] = useState<string | null>(null);
+  const [seenAt, setSeenAt] = useState<number | null>(null);
+  const [seenBefore, setSeenBefore] = useState(0);
 
-  const start = (type: JobType) => {
-    setJobType(type);
-    setOpen(true);
-    setPanel('none');
-    setStatus('');
-    setWhen('');
-    setJobDate('Today');
-    setSlotOpen(false);
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
+
+  useEffect(() => {
+    SecureStore.getItemAsync(SEEN_KEY)
+      .then((v) => setSeenAt(Number(v) || 0))
+      .catch(() => setSeenAt(0));
+  }, []);
+
+  const events = useMemo(() => jobEvents(jobs, userId), [jobs, userId]);
+  const unread =
+    seenAt === null ? 0 : events.filter((e) => e.fromOthers && e.at > seenAt).length;
+
+  const show = (next: Panel) => {
+    setPanel(next);
+    setFormType(null);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
   };
 
-  const openAlerts = async () => {
-    setPanel('alerts');
-    setOpen(false);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/jobs`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : [];
-      setAlerts(
-          list.filter(
-              (j: Job) =>
-                  j.customerClerkId === user?.id ||
-                  j.status === 'accepted' ||
-                  j.status === 'picked_up' ||
-                  j.status === 'delivered' ||
-                  j.paymentStatus === 'paid',
-          ),
-      );
-    } catch {
-      setAlerts([]);
-    }
+  const openAlerts = () => {
+    const now = Date.now();
+    setSeenBefore(seenAt ?? 0);
+    setSeenAt(now);
+    SecureStore.setItemAsync(SEEN_KEY, String(now)).catch(() => {});
+    show('alerts');
+    refresh();
   };
 
-  const postJob = async () => {
-    setStatus('');
-    if (!what.trim() || !pickup.trim() || !dropoff.trim() || !when) {
-      setStatus('What, pickup, dropoff and time slot are required');
-      return;
-    }
-    setBusy(true);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/jobs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          type: jobType,
-          what: what.trim(),
-          pickup: pickup.trim(),
-          dropoff: dropoff.trim(),
-          when: `${jobDate} · ${when}`,
-          budgetKes: Number(budget) || null,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setStatus(data.message ?? 'Could not post job');
-        return;
-      }
-      setStatus(`Posted. Job ${data.id}`);
-      setWhat('');
-      setPickup('');
-      setDropoff('');
-      setWhen('');
-      setSlotOpen(false);
-    } catch (e: any) {
-      setStatus(e?.message ?? 'Network error. Is mtaa-api running?');
-    } finally {
-      setBusy(false);
-    }
+  const onPosted = (job: Job) => {
+    setFormType(null);
+    setJustPostedId(job.id);
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+    AccessibilityInfo.announceForAccessibility('Job posted. Pay now so providers can accept it.');
   };
+
+  const showChrome = panel === 'none' && formType === null;
+  const justPosted = justPostedId ? jobs.find((j) => j.id === justPostedId) : undefined;
+  const mine = jobs.filter((j) => isCustomer(j, userId));
+  const activeMine = mine.filter((j) => j.status !== 'delivered' && j.id !== justPostedId);
+  const unpaidMine = activeMine.filter((j) => !isPaid(j)).length;
+  const ready = jobs.filter((j) => j.status === 'posted' && isPaid(j) && !isCustomer(j, userId));
+  const working = jobs.filter(
+    (j) => isProvider(j, userId) && (j.status === 'accepted' || j.status === 'picked_up'),
+  );
 
   return (
     <ThemedView style={styles.wrap}>
-      <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator
+      <SafeAreaView style={styles.flex} edges={['top', 'left', 'right']}>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <ThemedView style={styles.header}>
-            <Pressable
-              onPress={() => {
-                setOpen(false);
-                setPanel('profile');
-              }}
-              style={styles.avatar}
-            >
-              <Ionicons name="person" size={18} color="#fff" />
-            </Pressable>
-            <ThemedView style={styles.brand}>
-              <ThemedView style={styles.logoMark}>
-                <Ionicons name="caret-up" size={14} color="#fff" />
-              </ThemedView>
-              <ThemedText style={styles.brandText}>Mtaa</ThemedText>
-            </ThemedView>
-            <Pressable style={styles.bell} onPress={openAlerts}>
-              <Ionicons name="notifications-outline" size={22} color="#fff" />
-            </Pressable>
-          </ThemedView>
-
-          {panel === 'none' && !open ? (
-            <>
-              <ThemedView style={styles.search}>
-                <Ionicons name="search" size={18} color="#888" />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search for a service or errand"
-                  placeholderTextColor="#888"
-                  value={query}
-                  onChangeText={setQuery}
-                />
-              </ThemedView>
-
-              <ThemedView style={styles.toggle}>
-                <Pressable
-                  onPress={() => {
-                    setRole('customer');
-                    setOpen(false);
-                    setPanel('none');
-                  }}
-                  style={[styles.pill, role === 'customer' && styles.pillOn]}
-                >
-                  <ThemedText
-                    style={role === 'customer' ? styles.pillTextOn : styles.pillTextOff}
-                  >
-                    Customer
-                  </ThemedText>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    setRole('provider');
-                    setOpen(false);
-                    setPanel('none');
-                  }}
-                  style={[styles.pill, role === 'provider' && styles.pillOn]}
-                >
-                  <ThemedText
-                    style={role === 'provider' ? styles.pillTextOn : styles.pillTextOff}
-                  >
-                    Provider
-                  </ThemedText>
-                </Pressable>
-              </ThemedView>
-
-              <ThemedView type="backgroundElement" style={styles.intro}>
-                <ThemedText style={styles.cardHeading}>
-                  Everyday errands, done locally.
-                </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.cardSubtext}>
-                  Connect with reliable helpers right in your neighborhood to
-                  save time. Fast, secure, and nearby.
-                </ThemedText>
-              </ThemedView>
-            </>
-          ) : null}
-
-          {panel === 'profile' ? (
-            <ThemedView type="backgroundElement" style={styles.form}>
-              <Pressable onPress={() => setPanel('none')}>
-                <ThemedText type="small">Back</ThemedText>
-              </Pressable>
-              <ThemedText type="subtitle">Profile</ThemedText>
-              <ThemedText>{email}</ThemedText>
-              <ThemedText type="small">
-                Change photo is the next step.
-              </ThemedText>
-              <Pressable style={styles.signOut} onPress={() => signOut()}>
-                <ThemedText>Sign out</ThemedText>
-              </Pressable>
-            </ThemedView>
-          ) : null}
-
-          {panel === 'alerts' ? (
-            <ThemedView type="backgroundElement" style={styles.form}>
-              <Pressable onPress={() => setPanel('none')}>
-                <ThemedText type="small">Back</ThemedText>
-              </Pressable>
-              <ThemedText type="subtitle">Notifications</ThemedText>
-              {alerts.length === 0 ? (
-                <ThemedText type="small">No updates yet.</ThemedText>
-              ) : (
-                alerts.map((job) => (
-                  <ThemedText key={job.id} type="small">
-                    {job.what} · {job.status}
-                    {job.paymentStatus === 'paid' ? ' · paid' : ''}
-                  </ThemedText>
-                ))
-              )}
-            </ThemedView>
-          ) : null}
-
-          {panel === 'none' && open && role === 'customer' ? (
-            <ThemedView type="backgroundElement" style={styles.form}>
-              <Pressable onPress={() => setOpen(false)}>
-                <ThemedText type="small">Back</ThemedText>
-              </Pressable>
-              <ThemedText type="subtitle">{titles[jobType]}</ThemedText>
-              <TextInput
-                style={styles.input}
-                placeholder="What?"
-                placeholderTextColor="#888"
-                value={what}
-                onChangeText={setWhat}
+          <ScrollView
+            ref={scrollRef}
+            style={styles.flex}
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl
+                refreshing={loading && loaded}
+                onRefresh={refresh}
+                tintColor={theme.primary}
+                colors={[theme.primary]}
               />
-              <TextInput
-                style={styles.input}
-                placeholder="Pickup"
-                placeholderTextColor="#888"
-                value={pickup}
-                onChangeText={setPickup}
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Dropoff"
-                placeholderTextColor="#888"
-                value={dropoff}
-                onChangeText={setDropoff}
-              />
-              <ThemedText type="small">Day</ThemedText>
-              <ThemedView style={styles.dates}>
-                {DATES.map((d) => (
-                  <Pressable key={d} onPress={() => setJobDate(d)}>
-                    <ThemedText>{jobDate === d ? `• ${d}` : d}</ThemedText>
-                  </Pressable>
-                ))}
-              </ThemedView>
-              <ThemedText type="small">Time slot</ThemedText>
+            }
+          >
+            <View style={styles.header}>
               <Pressable
-                style={styles.input}
-                onPress={() => setSlotOpen((v) => !v)}
+                accessibilityRole="button"
+                accessibilityLabel="Your profile"
+                onPress={() => show('profile')}
+                hitSlop={6}
+                style={styles.headerButton}
               >
-                <ThemedText>{when || 'Choose time slot'}</ThemedText>
+                <Avatar uri={avatar.uri} initial={avatar.initial} size={36} />
               </Pressable>
-              {slotOpen
-                ? TIME_SLOTS.map((slot) => (
-                    <Pressable
-                      key={slot}
-                      onPress={() => {
-                        setWhen(slot);
-                        setSlotOpen(false);
-                      }}
-                      style={styles.slot}
-                    >
-                      <ThemedText>{slot}</ThemedText>
-                    </Pressable>
-                  ))
-                : null}
-              <TextInput
-                style={styles.input}
-                placeholder="Budget KES"
-                placeholderTextColor="#888"
-                keyboardType="number-pad"
-                value={budget}
-                onChangeText={setBudget}
-              />
-              <Pressable style={styles.btn} onPress={postJob} disabled={busy}>
-                <ThemedText>{busy ? 'Posting…' : 'Post job'}</ThemedText>
+              <View style={styles.brand}>
+                <View style={[styles.logoMark, { backgroundColor: theme.primary }]}>
+                  <Ionicons name="caret-up" size={14} color={theme.onPrimary} />
+                </View>
+                <ThemedText style={styles.brandText}>Mtaa</ThemedText>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  unread > 0 ? `Notifications, ${unread} new` : 'Notifications'
+                }
+                onPress={openAlerts}
+                hitSlop={6}
+                style={[styles.headerButton, styles.bell, { backgroundColor: theme.iconButton }]}
+              >
+                <Ionicons name="notifications-outline" size={22} color={theme.text} />
+                {unread > 0 ? (
+                  <View
+                    style={[styles.dot, { backgroundColor: theme.dangerButton, borderColor: theme.background }]}
+                  />
+                ) : null}
               </Pressable>
-              {status ? <ThemedText>{status}</ThemedText> : null}
-            </ThemedView>
-          ) : null}
+            </View>
 
-          {panel === 'none' && !open && role === 'customer' ? (
-            <>
-              <ThemedText style={styles.sectionLabel}>What do you need done?</ThemedText>
-              {ACTIONS.map((item) => (
+            {showChrome ? (
+              <>
                 <Pressable
-                  key={item.type}
-                  style={styles.row}
-                  onPress={() => start(item.type)}
+                  accessibilityRole="search"
+                  accessibilityLabel="Search jobs"
+                  onPress={() => router.navigate('/search')}
+                  style={[styles.search, { backgroundColor: theme.backgroundElement }]}
                 >
-                  <ThemedView style={styles.rowLeft}>
-                    <ThemedView style={styles.iconWrap}>
-                      <Ionicons name={item.icon} size={18} color="#3b82f6" />
-                    </ThemedView>
-                    <ThemedText>{item.label}</ThemedText>
-                  </ThemedView>
-                  <Ionicons name="chevron-forward" size={18} color="#888" />
+                  <Ionicons name="search" size={18} color={theme.placeholder} />
+                  <ThemedText style={{ color: theme.placeholder }}>
+                    Search for a service or errand
+                  </ThemedText>
                 </Pressable>
-              ))}
-            </>
-          ) : null}
 
-          {panel === 'none' && role === 'provider' ? (
-            <Pressable
-              style={styles.btn}
-              onPress={() => router.push('/explore')}
-            >
-              <ThemedText>Open Jobs</ThemedText>
-            </Pressable>
-          ) : null}
-        </ScrollView>
+                <RoleSwitch />
+
+                {error && !loaded ? (
+                  <Notice
+                    tone="error"
+                    title="Can't load jobs"
+                    message={error}
+                    action={{ label: 'Try again', onPress: refresh }}
+                  />
+                ) : null}
+
+                <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+                  <ThemedText style={styles.cardTitle}>Everyday errands, done locally.</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Get parcels delivered, shopping bought and errands run across Nairobi by
+                    people nearby, and follow every step until it&apos;s done.
+                  </ThemedText>
+                </View>
+              </>
+            ) : null}
+
+            {panel === 'profile' ? (
+              <ProfilePanel avatar={avatar} onBack={() => show('none')} />
+            ) : null}
+
+            {panel === 'alerts' ? (
+              <AlertsPanel
+                events={events}
+                seenBefore={seenBefore}
+                error={error}
+                loaded={loaded}
+                onBack={() => show('none')}
+                onOpenJob={() => router.navigate('/explore')}
+                onRetry={refresh}
+              />
+            ) : null}
+
+            {panel === 'none' && formType && role === 'customer' ? (
+              <PostForm type={formType} onClose={() => setFormType(null)} onPosted={onPosted} />
+            ) : null}
+
+            {showChrome && role === 'customer' ? (
+              <>
+                {justPosted ? (
+                  <PostedCard
+                    job={justPosted}
+                    onView={() => router.navigate('/explore')}
+                    onDismiss={() => setJustPostedId(null)}
+                  />
+                ) : null}
+
+                {activeMine.length > 0 ? (
+                  <PressableRow
+                    onPress={() => router.navigate('/explore')}
+                    accessibilityLabel={`${activeMine.length} jobs in progress. Open Jobs`}
+                    style={[styles.row, { backgroundColor: theme.backgroundElement }]}
+                  >
+                    <View style={styles.rowLeft}>
+                      <IconBadge icon="time-outline" />
+                      <View style={styles.flex}>
+                        <ThemedText>
+                          {activeMine.length} job{activeMine.length === 1 ? '' : 's'} in progress
+                        </ThemedText>
+                        <ThemedText type="small" themeColor={unpaidMine ? 'warning' : 'textSecondary'}>
+                          {unpaidMine
+                            ? `${unpaidMine} waiting for your payment`
+                            : `Latest: ${statusLabel(activeMine[0].status)}`}
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+                  </PressableRow>
+                ) : null}
+
+                <ThemedText style={styles.sectionLabel} accessibilityRole="header">
+                  What do you need done?
+                </ThemedText>
+                {JOB_TYPES.map((item) => (
+                  <PressableRow
+                    key={item.type}
+                    accessibilityLabel={item.label}
+                    onPress={() => {
+                      setFormType(item.type);
+                      setPanel('none');
+                      scrollRef.current?.scrollTo({ y: 0, animated: false });
+                    }}
+                    style={[styles.row, { backgroundColor: theme.backgroundElement }]}
+                  >
+                    <View style={styles.rowLeft}>
+                      <IconBadge icon={item.icon} />
+                      <ThemedText>{item.label}</ThemedText>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+                  </PressableRow>
+                ))}
+              </>
+            ) : null}
+
+            {showChrome && role === 'provider' ? (
+              <>
+                <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+                  <ThemedText style={styles.cardTitle}>Ready to earn?</ThemedText>
+                  <View style={styles.stats}>
+                    <View style={styles.stat}>
+                      <ThemedText style={styles.statValue}>{loaded ? ready.length : '–'}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        paid jobs ready to accept
+                      </ThemedText>
+                    </View>
+                    <View style={styles.stat}>
+                      <ThemedText style={styles.statValue}>{loaded ? working.length : '–'}</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        jobs you are doing now
+                      </ThemedText>
+                    </View>
+                  </View>
+                  <Button
+                    label="Browse jobs"
+                    icon="briefcase-outline"
+                    onPress={() => router.navigate('/explore')}
+                  />
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Jobs open up for providers once the customer has paid. You can&apos;t take jobs you
+                    posted yourself.
+                  </ThemedText>
+                </View>
+
+                {working.map((j) => (
+                  <PressableRow
+                    key={j.id}
+                    onPress={() => router.navigate('/explore')}
+                    accessibilityLabel={`${j.what}. Next: ${j.status === 'accepted' ? 'pick up' : 'deliver'}`}
+                    style={[styles.row, { backgroundColor: theme.backgroundElement }]}
+                  >
+                    <View style={styles.rowLeft}>
+                      <IconBadge icon={j.status === 'accepted' ? 'cube-outline' : 'bicycle-outline'} />
+                      <View style={styles.flex}>
+                        <ThemedText numberOfLines={1}>{j.what}</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                          {j.status === 'accepted'
+                            ? `Next: pick up at ${j.pickup}`
+                            : `Next: deliver to ${j.dropoff}`}
+                        </ThemedText>
+                      </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+                  </PressableRow>
+                ))}
+              </>
+            ) : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </ThemedView>
   );
@@ -389,116 +381,67 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1 },
-  safe: { flex: 1 },
-  scroll: { flex: 1 },
+  flex: { flex: 1 },
   content: {
-    paddingHorizontal: Spacing.four,
-    paddingBottom: 200,
-    gap: 16,
+    paddingHorizontal: Spacing.three,
+    paddingBottom: TabBarClearance,
+    gap: Spacing.three,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingTop: Spacing.two,
   },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#222',
+  headerButton: {
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  bell: { borderRadius: 22 },
+  dot: {
+    position: 'absolute',
+    top: 8,
+    right: 9,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    borderWidth: 2,
   },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   logoMark: {
     width: 24,
     height: 24,
     borderRadius: 7,
-    backgroundColor: '#2563eb',
     alignItems: 'center',
     justifyContent: 'center',
   },
   brandText: { fontSize: 18, fontWeight: '700' },
-  bell: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#222',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   search: {
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#1a1a1a',
     borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: Spacing.three,
   },
-  searchInput: { flex: 1, color: '#fff', fontSize: 16 },
-  toggle: {
-    flexDirection: 'row',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 24,
-    padding: 4,
-  },
-  pill: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderRadius: 20,
-  },
-  pillOn: { backgroundColor: '#2563eb' },
-  pillTextOn: { color: '#fff', fontWeight: '700' },
-  pillTextOff: { color: '#888', fontWeight: '500' },
-  intro: { borderRadius: 16, padding: 16, gap: 8 },
-  cardHeading: { fontSize: 16, lineHeight: 22, fontWeight: '700' },
-  cardSubtext: { lineHeight: 20 },
+  card: { borderRadius: Radius.lg, padding: Spacing.three, gap: 10 },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  cardTitle: { flex: 1, fontSize: 16, lineHeight: 22, fontWeight: '700' },
+  sectionLabel: { fontSize: 18, fontWeight: '700' },
   row: {
+    minHeight: 64,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#1a1a1a',
-    borderRadius: 16,
-    paddingVertical: 16,
+    borderRadius: Radius.lg,
+    paddingVertical: 14,
     paddingHorizontal: 14,
+    gap: 8,
   },
-  rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(37, 99, 235, 0.16)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sectionLabel: { fontSize: 18, fontWeight: '700' },
-  form: {
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-  },
-  dates: { flexDirection: 'row', gap: 16 },
-  slot: { paddingVertical: 8 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    color: '#fff',
-  },
-  btn: {
-    backgroundColor: '#2563eb',
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
-  },
-  signOut: {
-    backgroundColor: '#ef4444',
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
-  },
+  rowLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  stats: { flexDirection: 'row', gap: Spacing.three },
+  stat: { flex: 1, gap: 2 },
+  statValue: { fontSize: 28, lineHeight: 34, fontWeight: '700' },
 });

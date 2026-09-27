@@ -3,6 +3,7 @@ import { useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
 
+// Four tabs only. Profile and notifications open as panels from the Home header.
 export default function AppTabs() {
   const scheme = useColorScheme();
   const colors = Colors[scheme === 'unspecified' ? 'light' : scheme];
@@ -10,9 +11,9 @@ export default function AppTabs() {
   return (
     <NativeTabs
       backgroundColor={colors.background}
-      tintColor="#2563eb"
-      indicatorColor="#2563eb"
-      iconColor={{ default: colors.textSecondary, selected: '#2563eb' }}
+      tintColor={colors.primary}
+      indicatorColor={colors.primary}
+      iconColor={{ default: colors.textSecondary, selected: colors.primary }}
       labelStyle={{ default: { color: colors.textSecondary }, selected: { color: colors.text } }}
     >
       <NativeTabs.Trigger name="index">
@@ -54,17 +55,6 @@ export default function AppTabs() {
           src={{
             default: require('@/assets/images/tabIcons/settings-default.png'),
             selected: require('@/assets/images/tabIcons/settings-selected.png'),
-          }}
-          renderingMode="original"
-        />
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="profile">
-        <NativeTabs.Trigger.Label>Profile</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon
-          src={{
-            default: require('@/assets/images/tabIcons/user-default.png'),
-            selected: require('@/assets/images/tabIcons/user-selected.png'),
           }}
           renderingMode="original"
         />
